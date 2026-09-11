@@ -1,0 +1,28 @@
+# Dependencies (NEVER push these - they are huge)
+node_modules/
+*/node_modules/
+
+# Production build outputs
+dist/
+build/
+*/dist/
+*/build/
+
+# Environment files containing secrets or local URLs
+.env
+.env.local
+.env.*.local
+
+# Android build outputs and Keystore keys
+android/app/build/
+*.jks
+*.keystore
+.gradle/
+local.properties
+
+# Operating system / IDE clutter
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
