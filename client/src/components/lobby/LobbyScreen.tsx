@@ -28,6 +28,11 @@ import {
   Sparkles,
   Building2,
   UserCheck,
+  Server,
+  Settings2,
+  Loader2,
+  WifiOff,
+  AlertCircle,
 } from 'lucide-react';
 
 interface LobbyScreenProps {
@@ -41,6 +46,9 @@ interface LobbyScreenProps {
   onAutoFillBots: () => void;
   onStartAuction: () => void;
   isConnected: boolean;
+  connectionStatus?: 'connected' | 'connecting' | 'disconnected';
+  serverUrl?: string;
+  onUpdateServerUrl?: (url: string) => void;
 }
 
 // 12 Curated Football Manager Avatar Presets
@@ -74,6 +82,9 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
   onAutoFillBots,
   onStartAuction,
   isConnected,
+  connectionStatus = isConnected ? 'connected' : 'disconnected',
+  serverUrl = 'http://localhost:4000',
+  onUpdateServerUrl,
 }) => {
   const [pinInput, setPinInput] = useState('');
   const [copiedPin, setCopiedPin] = useState(false);
@@ -82,6 +93,64 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
   const [clubNameInput, setClubNameInput] = useState(currentManager.clubName || 'Thunderbolts FC');
   const [crestInput, setCrestInput] = useState(currentManager.clubCrest);
   const [avatarInput, setAvatarInput] = useState(currentManager.avatarUrl);
+
+  // Server configuration modal state
+  const [isConfiguringServer, setIsConfiguringServer] = useState(false);
+  const [serverUrlInput, setServerUrlInput] = useState(serverUrl);
+  const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'failed'>('idle');
+  const [testMessage, setTestMessage] = useState('');
+
+  const handleTestAndSaveServer = async () => {
+    let cleaned = serverUrlInput.trim();
+    if (!cleaned) return;
+    if (cleaned.endsWith('/')) cleaned = cleaned.slice(0, -1);
+    if (
+      typeof window !== 'undefined' &&
+      window.location.protocol === 'https:' &&
+      cleaned.startsWith('http://') &&
+      !cleaned.includes('localhost') &&
+      !cleaned.includes('127.0.0.1')
+    ) {
+      cleaned = cleaned.replace('http://', 'https://');
+      setServerUrlInput(cleaned);
+    }
+
+    setTestStatus('testing');
+    setTestMessage('Pinging server health check...');
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
+      const res = await fetch(`${cleaned}/api/health`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        const data = await res.json();
+        setTestStatus('success');
+        setTestMessage(`Server is Online! (${data.service || 'Tactaka Game Server'})`);
+        if (onUpdateServerUrl) {
+          onUpdateServerUrl(cleaned);
+        }
+        setTimeout(() => setIsConfiguringServer(false), 1200);
+      } else {
+        setTestStatus('failed');
+        setTestMessage(`Server returned HTTP ${res.status}. Saving URL anyway...`);
+        if (onUpdateServerUrl) {
+          onUpdateServerUrl(cleaned);
+        }
+      }
+    } catch (err: any) {
+      setTestStatus('failed');
+      if (err.name === 'AbortError') {
+        setTestMessage('Request timed out. If using Render free tier, it may be waking up (~45s). URL saved.');
+      } else {
+        setTestMessage('Could not reach server directly (CORS/SSL). URL saved for Socket.IO connection.');
+      }
+      if (onUpdateServerUrl) {
+        onUpdateServerUrl(cleaned);
+      }
+    }
+  };
 
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     return (localStorage.getItem('tactaka_theme') as 'dark' | 'light') || 'dark';
@@ -152,19 +221,150 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
     setIsEditingProfile(false);
   };
 
+  const renderServerModal = () => {
+    if (!isConfiguringServer) return null;
+    return (
+      <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="bg-slate-900 border border-slate-700 w-full max-w-sm rounded-2xl p-5 shadow-2xl relative space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-2">
+              <Server className="w-5 h-5 text-cyan-400" />
+              <h3 className="font-black text-sm text-white">Game Server Connection</h3>
+            </div>
+            <button
+              onClick={() => setIsConfiguringServer(false)}
+              className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className="text-xs text-slate-300 space-y-1.5">
+            <p className="leading-relaxed">
+              Tactaka requires a live Node.js/Socket.IO backend to run card auctions, manage contracts, and simulate tournament matches.
+            </p>
+            <p className="text-slate-400 text-[11px] leading-relaxed">
+              Enter your live <strong>Render.com</strong> URL below (e.g. <span className="text-cyan-300 font-mono">https://tactaka.onrender.com</span>).
+            </p>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-black text-slate-300 uppercase tracking-wider block mb-1">
+              Backend Server URL
+            </label>
+            <input
+              type="text"
+              value={serverUrlInput}
+              onChange={(e) => setServerUrlInput(e.target.value)}
+              placeholder="https://your-service.onrender.com"
+              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-400"
+            />
+          </div>
+
+          {testMessage && (
+            <div
+              className={`p-2.5 rounded-xl text-xs flex items-center gap-2 ${
+                testStatus === 'success'
+                  ? 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-300'
+                  : testStatus === 'failed'
+                  ? 'bg-rose-950/60 border border-rose-500/40 text-rose-300'
+                  : 'bg-cyan-950/60 border border-cyan-500/40 text-cyan-300'
+              }`}
+            >
+              {testStatus === 'testing' && <Loader2 className="w-4 h-4 animate-spin text-cyan-400 flex-shrink-0" />}
+              {testStatus === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />}
+              {testStatus === 'failed' && <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />}
+              <span className="text-[11px] leading-tight">{testMessage}</span>
+            </div>
+          )}
+
+          {/* Quick Presets */}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setServerUrlInput('http://localhost:4000')}
+              className="flex-1 py-1.5 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold border border-slate-700 transition-colors cursor-pointer"
+            >
+              Localhost (4000)
+            </button>
+            {import.meta.env.VITE_SERVER_URL && (
+              <button
+                type="button"
+                onClick={() => setServerUrlInput(import.meta.env.VITE_SERVER_URL)}
+                className="flex-1 py-1.5 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[10px] font-bold border border-cyan-500/30 transition-colors cursor-pointer"
+              >
+                Env Default
+              </button>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+            <button
+              type="button"
+              onClick={() => setIsConfiguringServer(false)}
+              className="px-3.5 py-1.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleTestAndSaveServer}
+              disabled={testStatus === 'testing' || !serverUrlInput.trim()}
+              className="px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-black shadow-lg shadow-cyan-500/20 disabled:opacity-50 transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              {testStatus === 'testing' ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Connecting...</span>
+                </>
+              ) : (
+                <span>Save & Connect</span>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // IF NOT IN ROOM YET: Main Landing / Join Screen
   if (!roomState) {
     return (
       <div className="flex-1 flex flex-col p-4 justify-between overflow-y-auto">
+        {renderServerModal()}
         {/* Top Header & Branding */}
         <div>
           <div className="flex items-center justify-between pt-1 pb-2">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
-                TACTAKA ENGINE v2.4
+            {/* Server Connection Status Pill */}
+            <button
+              onClick={() => setIsConfiguringServer(true)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-[10px] font-mono font-bold tracking-wide transition-all cursor-pointer ${
+                connectionStatus === 'connected'
+                  ? 'bg-emerald-950/70 text-emerald-300 border-emerald-500/40 hover:bg-emerald-900/60 shadow-sm shadow-emerald-500/20'
+                  : connectionStatus === 'connecting'
+                  ? 'bg-amber-950/70 text-amber-300 border-amber-500/40 animate-pulse hover:bg-amber-900/60'
+                  : 'bg-rose-950/70 text-rose-300 border-rose-500/40 hover:bg-rose-900/60 shadow-sm shadow-rose-500/20'
+              }`}
+              title="Click to configure Game Server (Render / Localhost)"
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  connectionStatus === 'connected'
+                    ? 'bg-emerald-400'
+                    : connectionStatus === 'connecting'
+                    ? 'bg-amber-400 animate-ping'
+                    : 'bg-rose-400'
+                }`}
+              />
+              <span>
+                {connectionStatus === 'connected'
+                  ? 'SERVER ONLINE'
+                  : connectionStatus === 'connecting'
+                  ? 'WAKING UP...'
+                  : 'SERVER OFFLINE'}
               </span>
-            </div>
+              <Settings2 className="w-3 h-3 opacity-70 ml-0.5" />
+            </button>
 
             {/* Quick Day / Night Toggle */}
             <button
@@ -185,6 +385,39 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
               )}
             </button>
           </div>
+
+          {/* Render Wake-Up / Disconnect Notice */}
+          {connectionStatus === 'connecting' && (
+            <div className="mt-1 mb-2 p-2.5 rounded-xl bg-amber-950/60 border border-amber-500/40 flex items-start gap-2.5 text-xs text-amber-200">
+              <Loader2 className="w-4 h-4 text-amber-400 animate-spin flex-shrink-0 mt-0.5" />
+              <div className="flex-1 text-[11px] leading-snug">
+                <span className="font-bold">Waking up Render Game Server...</span>
+                <p className="text-amber-300/80 mt-0.5">
+                  Free Render servers spin down during inactivity and take <strong>~30–50s</strong> to boot up. The tournament buttons will activate the moment it responds!
+                </p>
+              </div>
+            </div>
+          )}
+
+          {connectionStatus === 'disconnected' && (
+            <div className="mt-1 mb-2 p-2.5 rounded-xl bg-rose-950/60 border border-rose-500/40 flex items-center justify-between gap-2 text-xs text-rose-200">
+              <div className="flex items-center gap-2 text-[11px]">
+                <WifiOff className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                <div>
+                  <span className="font-bold">Backend Server Offline</span>
+                  <p className="text-rose-300/80 text-[10px]">
+                    Connect your Render URL to enable online tournaments.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsConfiguringServer(true)}
+                className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-[10px] cursor-pointer shadow-sm transition-all"
+              >
+                Configure URL
+              </button>
+            </div>
+          )}
 
           <div className="text-center py-2">
             <h1 className="text-3xl font-black tracking-tight text-white flex items-center justify-center gap-2">
@@ -421,12 +654,38 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
 
           {/* Create Room Button */}
           <button
-            disabled={!isConnected}
-            onClick={onCreateRoom}
-            className="w-full py-3.5 px-4 rounded-2xl font-black text-sm tracking-wide flex items-center justify-center gap-2 bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:from-amber-300 hover:to-yellow-400 text-black shadow-xl shadow-amber-500/25 transition-all active:scale-[0.98] cursor-pointer"
+            onClick={() => {
+              if (!isConnected) {
+                setIsConfiguringServer(true);
+              } else {
+                onCreateRoom();
+              }
+            }}
+            disabled={!isConnected && connectionStatus === 'connecting'}
+            className={`w-full py-3.5 px-4 rounded-2xl font-black text-sm tracking-wide flex items-center justify-center gap-2 shadow-xl transition-all active:scale-[0.98] cursor-pointer ${
+              isConnected
+                ? 'bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:from-amber-300 hover:to-yellow-400 text-black shadow-amber-500/25'
+                : connectionStatus === 'connecting'
+                ? 'bg-amber-600/50 text-amber-100 border border-amber-400/30 opacity-80 cursor-wait'
+                : 'bg-gradient-to-r from-rose-500 via-rose-600 to-amber-500 hover:from-rose-400 hover:to-amber-400 text-white shadow-rose-500/25'
+            }`}
           >
-            <Plus className="w-5 h-5" />
-            <span>CREATE NEW TOURNAMENT ROOM</span>
+            {connectionStatus === 'connecting' ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span>WAKING UP SERVER (~30-50s)...</span>
+              </>
+            ) : isConnected ? (
+              <>
+                <Plus className="w-5 h-5" />
+                <span>CREATE NEW TOURNAMENT ROOM</span>
+              </>
+            ) : (
+              <>
+                <Server className="w-5 h-5" />
+                <span>CONNECT RENDER SERVER TO PLAY</span>
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -440,6 +699,7 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
 
   return (
     <div className="flex-1 flex flex-col p-4 justify-between overflow-y-auto">
+      {renderServerModal()}
       {/* Room Header & PIN Display */}
       <div>
         <div className="flex items-center justify-between mb-3">

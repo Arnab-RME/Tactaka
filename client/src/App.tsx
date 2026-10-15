@@ -21,15 +21,24 @@ import { TournamentScreen } from './components/tournament/TournamentScreen';
 import { MatchBroadcastScreen } from './components/broadcast/MatchBroadcastScreen';
 import { CareerScreen } from './components/career/CareerScreen';
 
-const SERVER_URL =
-  import.meta.env.VITE_SERVER_URL ||
-  (typeof window !== 'undefined' && window.location.hostname
+const getInitialServerUrl = (): string => {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('tactaka_server_url');
+    if (saved && saved.trim()) return saved.trim();
+  }
+  if (import.meta.env.VITE_SERVER_URL) {
+    return import.meta.env.VITE_SERVER_URL;
+  }
+  return typeof window !== 'undefined' && window.location.hostname
     ? `http://${window.location.hostname}:4000`
-    : 'http://localhost:4000');
+    : 'http://localhost:4000';
+};
 
 export const App: React.FC = () => {
+  const [serverUrl, setServerUrl] = useState<string>(getInitialServerUrl);
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting');
   const [roomState, setRoomState] = useState<RoomState | null>(null);
   const [tacticsTimer, setTacticsTimer] = useState<number>(180);
   const [activeViewingMatch, setActiveViewingMatch] = useState<MatchFixture | null>(null);
@@ -52,20 +61,54 @@ export const App: React.FC = () => {
     localStorage.setItem('tactaka_manager_profile', JSON.stringify(managerProfile));
   }, [managerProfile]);
 
+  const handleUpdateServerUrl = (newUrl: string) => {
+    let cleaned = newUrl.trim();
+    if (cleaned.endsWith('/')) {
+      cleaned = cleaned.slice(0, -1);
+    }
+    localStorage.setItem('tactaka_server_url', cleaned);
+    setServerUrl(cleaned);
+  };
+
   // Connect to Authoritative Socket Server
   useEffect(() => {
-    const s = io(SERVER_URL, {
+    setConnectionStatus('connecting');
+    setIsConnected(false);
+
+    let targetUrl = serverUrl.trim();
+    if (
+      typeof window !== 'undefined' &&
+      window.location.protocol === 'https:' &&
+      targetUrl.startsWith('http://') &&
+      !targetUrl.includes('localhost') &&
+      !targetUrl.includes('127.0.0.1')
+    ) {
+      targetUrl = targetUrl.replace('http://', 'https://');
+    }
+
+    const s = io(targetUrl, {
       transports: ['websocket', 'polling'],
+      timeout: 25000,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 2000,
     });
 
     s.on('connect', () => {
       console.log('Connected to Tactaka Server:', s.id);
       setIsConnected(true);
+      setConnectionStatus('connected');
+    });
+
+    s.on('connect_error', (err) => {
+      console.warn('Socket connection error:', err.message);
+      setIsConnected(false);
+      setConnectionStatus('disconnected');
     });
 
     s.on('disconnect', () => {
       console.log('Disconnected from Tactaka Server');
       setIsConnected(false);
+      setConnectionStatus('disconnected');
     });
 
     s.on('room_state', (state: RoomState) => {
@@ -111,7 +154,7 @@ export const App: React.FC = () => {
     return () => {
       s.disconnect();
     };
-  }, []);
+  }, [serverUrl]);
 
   const handleUpdateProfile = (updated: Partial<ManagerProfile>) => {
     setManagerProfile((prev: ManagerProfile) => ({ ...prev, ...updated }));
@@ -287,6 +330,9 @@ export const App: React.FC = () => {
           onAutoFillBots={handleAutoFillBots}
           onStartAuction={handleStartAuction}
           isConnected={isConnected}
+          connectionStatus={connectionStatus}
+          serverUrl={serverUrl}
+          onUpdateServerUrl={handleUpdateServerUrl}
         />
       );
     }
